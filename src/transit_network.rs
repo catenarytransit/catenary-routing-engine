@@ -3,7 +3,7 @@ use crate::coord_int_convert::coord_to_int;
 use gtfs_structures::*;
 use serde::{Deserialize, Serialize};
 use serde_with::*;
-
+use petgraph::graph::*;
 use crate::NodeType;
 use chrono::prelude::*;
 use std::collections::hash_map::Entry;
@@ -90,15 +90,6 @@ pub fn calendar_date_filter(
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct TimeExpandedGraph {
-    //graph struct that will be used to route
-    pub nodes: HashSet<NodeId>,
-    pub edges: HashMap<NodeId, HashMap<NodeId, u64>>, // tail.id, <head.id, cost>
-    pub station_map: HashMap<String, i64>, //station_id string, internal station_id (assigned number)
-    pub station_info: HashMap<i64, (StationInfo, Vec<(u64, NodeId)>)>, //station_id, <cost, node>
-}
-
-#[derive(Debug, PartialEq, Clone)]
 pub struct LineConnectionTable {
     //for a single line/route, gives the following information:
     pub times_from_start: HashMap<i64, u64>, //<stationid, time from start> for every station along the line/route
@@ -113,258 +104,205 @@ pub struct DirectConnections {
 }
 
 //init new transit network graph based on results from reading GTFS zip
-impl TimeExpandedGraph {
-    pub fn new(
-        mut gtfs: Gtfs,
-        mut day_of_week: String,
-        transfer_buffer: u64,
-    ) -> (Self, DirectConnections) {
-        day_of_week = day_of_week.to_lowercase();
+pub fn new_transit_network (
+    mut gtfs: Gtfs,
+    mut day_of_week: String,
+    transfer_buffer: u64,
+) -> (Graph<NodeId, u64>, DirectConnections) {
+    day_of_week = day_of_week.to_lowercase();
 
-        let mut nodes: HashSet<NodeId> = HashSet::new(); //maps GTFS stop id string to sequential numeric stop id
-        let mut edges: HashMap<NodeId, HashMap<NodeId, u64>> = HashMap::new();
-        let mut station_map: HashMap<String, i64> = HashMap::new();
-        let mut station_info: HashMap<i64, (StationInfo, Vec<(u64, NodeId)>)> = HashMap::new(); // <stationid, (time, node_id)>, # of stations and # of times
+    let mut graph = Graph::<NodeId, u64>::new();
+    let mut station_map: HashMap<String, i64> = HashMap::new();
+    let mut station_info: HashMap<i64, (StationInfo, Vec<(u64, NodeId, _)>)> = HashMap::new(); // <stationid, (time, node_id)>, # of stations and # of times
 
-        let mut route_tables: HashMap<String, LineConnectionTable> = HashMap::new();
-        let mut lines_per_station: HashMap<i64, Vec<(String, u16)>> = HashMap::new();
+    let mut route_tables: HashMap<String, LineConnectionTable> = HashMap::new();
+    let mut lines_per_station: HashMap<i64, Vec<(String, u16)>> = HashMap::new();
 
-        let service_ids_of_given_day: HashSet<String> = gtfs
-            .calendar
-            .iter()
-            .filter_map(|(service_id, calendar)| {
-                calendar_date_filter(day_of_week.as_str(), service_id, calendar)
-            })
-            .collect();
+    let service_ids_of_given_day: HashSet<String> = gtfs
+        .calendar
+        .iter()
+        .filter_map(|(service_id, calendar)| {
+            calendar_date_filter(day_of_week.as_str(), service_id, calendar)
+        })
+        .collect();
 
-        let trip_ids_of_given_day: HashSet<String> = gtfs
-            .trips
-            .iter()
-            .filter(|(_, trip)| service_ids_of_given_day.contains(&trip.service_id))
-            .map(|(trip_id, _)| trip_id.to_owned())
-            .collect();
+    let trip_ids_of_given_day: HashSet<String> = gtfs
+        .trips
+        .iter()
+        .filter(|(_, trip)| service_ids_of_given_day.contains(&trip.service_id))
+        .map(|(trip_id, _)| trip_id.to_owned())
+        .collect();
 
-        for (iterator, stop_id) in (0_i64..).zip(gtfs.stops.iter()) {
-            station_map.insert(stop_id.0.clone(), stop_id.0.parse().unwrap_or(iterator));
+    for (iterator, stop_id) in (0_i64..).zip(gtfs.stops.iter()) {
+        station_map.insert(stop_id.0.clone(), stop_id.0.parse().unwrap_or(iterator));
+    }
+
+    let mut custom_trip_id: u64 = 0; //custom counter like with stop_id
+    let mut nodes_by_time: Vec<(u64, NodeId, _)> = Vec::new();
+
+    for (_, trip) in gtfs.trips.iter_mut() {
+        if !trip_ids_of_given_day.contains(&trip.id) {
+            continue;
         }
 
-        let mut custom_trip_id: u64 = 0; //custom counter like with stop_id
-        let mut nodes_by_time: Vec<(u64, NodeId)> = Vec::new();
+        let trip_id: u64 = trip.id.parse().unwrap_or({
+            custom_trip_id += 1;
+            custom_trip_id
+        });
 
-        for (_, trip) in gtfs.trips.iter_mut() {
-            if !trip_ids_of_given_day.contains(&trip.id) {
-                continue;
-            }
+        trip.stop_times
+            .sort_by(|a, b| a.stop_sequence.cmp(&b.stop_sequence));
 
-            let trip_id: u64 = trip.id.parse().unwrap_or({
-                custom_trip_id += 1;
-                custom_trip_id
-            });
+        let trip_start_time: u64 = trip
+            .stop_times
+            .first()
+            .unwrap()
+            .arrival_time
+            .unwrap()
+            .into();
+        let mut stations_time_from_trip_start = HashMap::new();
 
-            trip.stop_times
-                .sort_by(|a, b| a.stop_sequence.cmp(&b.stop_sequence));
+        let route_id = &trip.route_id;
 
-            let trip_start_time: u64 = trip
-                .stop_times
-                .first()
-                .unwrap()
-                .arrival_time
-                .unwrap()
-                .into();
-            let mut stations_time_from_trip_start = HashMap::new();
+        let mut prev_stop: Option<(_, u64)> = None;
 
-            let route_id = &trip.route_id;
+        for stoptime in trip.stop_times.iter() {
+            let id = *station_map.get(&stoptime.stop.id).unwrap();
 
-            let mut prev_stop: Option<(NodeId, u64)> = None;
+            let (lon, lat) = coord_to_int(
+                stoptime.stop.longitude.unwrap(),
+                stoptime.stop.latitude.unwrap(),
+            );
 
-            for stoptime in trip.stop_times.iter() {
-                let id = *station_map.get(&stoptime.stop.id).unwrap();
+            let arrival_time: u64 = stoptime.arrival_time.unwrap().into();
+            let departure_time: u64 = stoptime.departure_time.unwrap().into();
 
-                let (lon, lat) = coord_to_int(
-                    stoptime.stop.longitude.unwrap(),
-                    stoptime.stop.latitude.unwrap(),
-                );
+            stations_time_from_trip_start.insert(id, arrival_time - trip_start_time);
 
-                let arrival_time: u64 = stoptime.arrival_time.unwrap().into();
-                let departure_time: u64 = stoptime.departure_time.unwrap().into();
-
-                stations_time_from_trip_start.insert(id, arrival_time - trip_start_time);
-
-                match lines_per_station.entry(id) {
-                    Entry::Occupied(mut o) => {
-                        let map = o.get_mut();
-                        map.push((route_id.to_string(), stoptime.stop_sequence));
-                    }
-                    Entry::Vacant(v) => {
-                        v.insert(vec![(route_id.to_string(), stoptime.stop_sequence)]);
-                    }
-                }
-
-                let arrival_node = NodeId {
-                    node_type: NodeType::Arrival,
-                    station_id: id,
-                    time: Some(arrival_time),
-                    trip_id,
-                };
-                let transfer_node = NodeId {
-                    node_type: NodeType::Transfer,
-                    station_id: id,
-                    time: Some(arrival_time + transfer_buffer),
-                    trip_id,
-                };
-                //direct link to next nodeset for compacting graph
-                let departure_node = NodeId {
-                    node_type: NodeType::Departure,
-                    station_id: id,
-                    time: Some(departure_time),
-                    trip_id,
-                };
-
-                nodes.insert(arrival_node);
-                nodes.insert(transfer_node);
-                nodes.insert(departure_node);
-
-                if let Some((prev_dep, prev_dep_time)) = prev_stop {
-                    edges //travelling arc (prev transfer to arrival of same route)
-                        .entry(prev_dep) //tail
-                        .and_modify(|inner| {
-                            inner.insert(arrival_node, arrival_time - prev_dep_time);
-                            //head
-                        })
-                        .or_insert({
-                            let mut a = HashMap::new();
-                            a.insert(arrival_node, arrival_time - prev_dep_time); //head
-                            a
-                        });
-                }
-
-                edges //layover arc for current arrival to current departure
-                    .entry(arrival_node) //tail
-                    .and_modify(|inner| {
-                        inner.insert(departure_node, departure_time - arrival_time);
-                        //head
-                    })
-                    .or_insert({
-                        let mut a = HashMap::new();
-                        a.insert(departure_node, departure_time - arrival_time); //head
-                        a
-                    });
-
-                edges //alighting arc (arrival to next transfer of same route)
-                    .entry(arrival_node) //tail
-                    .and_modify(|inner| {
-                        inner.insert(transfer_node, transfer_buffer);
-                        //head
-                    })
-                    .or_insert({
-                        let mut a = HashMap::new();
-                        a.insert(transfer_node, transfer_buffer); //head
-                        a
-                    });
-
-                let node_list = vec![
-                    (arrival_time, arrival_node),
-                    (arrival_time + transfer_buffer, transfer_node),
-                    (departure_time, departure_node),
-                ];
-
-                nodes_by_time.extend(node_list.iter());
-
-                station_info
-                    .entry(id)
-                    .and_modify(|inner| {
-                        inner.1.extend(node_list.iter());
-                        inner.0.id = id;
-                        inner.0.lat = lat;
-                        inner.0.lon = lon;
-                    })
-                    .or_insert((StationInfo { id, lat, lon }, node_list));
-
-                prev_stop = Some((departure_node, departure_time));
-                //prev_stop = Some((transfer_node, arrival_time + transfer_buffer));
-            }
-
-            match route_tables.entry(route_id.clone()) {
+            match lines_per_station.entry(id) {
                 Entry::Occupied(mut o) => {
-                    let table = o.get_mut();
-                    table
-                        .times_from_start
-                        .extend(stations_time_from_trip_start.iter());
-                    table.start_times.push(trip_start_time);
+                    let map = o.get_mut();
+                    map.push((route_id.to_string(), stoptime.stop_sequence));
                 }
                 Entry::Vacant(v) => {
-                    v.insert(LineConnectionTable {
-                        times_from_start: stations_time_from_trip_start,
-                        start_times: Vec::from([trip_start_time]),
-                    });
+                    v.insert(vec![(route_id.to_string(), stoptime.stop_sequence)]);
                 }
             }
-        }
-        for (_, station) in station_info.iter_mut() {
-            station.1.sort_by(|a, b| a.0.cmp(&b.0));
-            let time_chunks = station.1.chunk_by_mut(|a, b| a.0 == b.0);
 
-            let mut station_nodes_by_time: Vec<(u64, NodeId)> = Vec::new();
-            for chunk in time_chunks {
-                chunk.sort_by(|a, b| a.1.node_type.cmp(&b.1.node_type));
-                station_nodes_by_time.append(&mut chunk.to_vec().to_owned())
+            let arrival_node = NodeId {
+                node_type: NodeType::Arrival,
+                station_id: id,
+                time: Some(arrival_time),
+                trip_id,
+            };
+            let transfer_node = NodeId {
+                node_type: NodeType::Transfer,
+                station_id: id,
+                time: Some(arrival_time + transfer_buffer),
+                trip_id,
+            };
+            //direct link to next nodeset for compacting graph
+            let departure_node = NodeId {
+                node_type: NodeType::Departure,
+                station_id: id,
+                time: Some(departure_time),
+                trip_id,
+            };
+
+            let arr = graph.add_node(arrival_node);
+            let tra = graph.add_node(transfer_node);
+            let dep = graph.add_node(departure_node);
+
+            if let Some((prev_dep, prev_dep_time)) = prev_stop {
+                graph.update_edge(prev_dep, arr, arrival_time - prev_dep_time);
+                //travelling arc (prev transfer to arrival of same route)
             }
 
-            for (current_index, node) in station_nodes_by_time.iter().enumerate() {
-                if node.1.node_type == NodeType::Transfer {
-                    for index in current_index + 1..station_nodes_by_time.len() {
-                        let future_node = station_nodes_by_time.get(index).unwrap();
-                        if future_node.1.node_type == NodeType::Transfer {
-                            edges //waiting arc (transfer to transfers of any route)
-                                .entry(node.1) //tail
-                                .and_modify(|inner| {
-                                    inner.insert(future_node.1, future_node.0 - node.0);
-                                    //head
-                                })
-                                .or_insert({
-                                    let mut a = HashMap::new();
-                                    a.insert(future_node.1, future_node.0 - node.0); //head
-                                    a
-                                });
-                            break;
-                        }
+            graph.update_edge(arr, dep, departure_time - arrival_time);
+            //layover arc for current arrival to current departure
 
-                        if future_node.1.node_type == NodeType::Departure {
-                            edges //boarding arc (transfer to departures of any route)
-                                .entry(node.1) //tail
-                                .and_modify(|inner| {
-                                    inner.insert(future_node.1, future_node.0 - node.0);
-                                    //head
-                                })
-                                .or_insert({
-                                    let mut a = HashMap::new();
-                                    a.insert(future_node.1, future_node.0 - node.0); //head
-                                    a
-                                });
-                        }
+            //alighting arc (arrival to next transfer of same route)
+            graph.update_edge(arr, tra, transfer_buffer);
+
+            let node_list = vec![
+                (arrival_time, arrival_node, arr),
+                (arrival_time + transfer_buffer, transfer_node, tra),
+                (departure_time, departure_node, dep),
+            ];
+
+            nodes_by_time.extend(node_list.iter());
+
+            station_info
+                .entry(id)
+                .and_modify(|inner| {
+                    inner.1.extend(node_list.iter());
+                    inner.0.id = id;
+                    inner.0.lat = lat;
+                    inner.0.lon = lon;
+                })
+                .or_insert((StationInfo { id, lat, lon }, node_list));
+
+            prev_stop = Some((dep, departure_time));
+            //prev_stop = Some((transfer_node, arrival_time + transfer_buffer));
+        }
+
+        match route_tables.entry(route_id.clone()) {
+            Entry::Occupied(mut o) => {
+                let table = o.get_mut();
+                table
+                    .times_from_start
+                    .extend(stations_time_from_trip_start.iter());
+                table.start_times.push(trip_start_time);
+            }
+            Entry::Vacant(v) => {
+                v.insert(LineConnectionTable {
+                    times_from_start: stations_time_from_trip_start,
+                    start_times: Vec::from([trip_start_time]),
+                });
+            }
+        }
+    }
+    for (_, station) in station_info.iter_mut() {
+        station.1.sort_by(|a, b| a.0.cmp(&b.0));
+        let time_chunks = station.1.chunk_by_mut(|a, b| a.0 == b.0);
+
+        let mut station_nodes_by_time: Vec<(u64, NodeId, _)> = Vec::new();
+        for chunk in time_chunks {
+            chunk.sort_by(|a, b| a.1.node_type.cmp(&b.1.node_type));
+            station_nodes_by_time.append(&mut chunk.to_vec().to_owned())
+        }
+
+        for (current_index, node) in station_nodes_by_time.iter().enumerate() {
+            if node.1.node_type == NodeType::Transfer {
+                for index in current_index + 1..station_nodes_by_time.len() {
+                    let future_node = station_nodes_by_time.get(index).unwrap();
+                    if future_node.1.node_type == NodeType::Transfer {
+                        graph.update_edge(node.2, future_node.2, future_node.0 - node.0);
+                        //waiting arc (transfer to transfers of any route)
+                        break;
+                    }
+
+                    if future_node.1.node_type == NodeType::Departure {
+                        graph.update_edge(node.2, future_node.2, future_node.0 - node.0);
+                        //boarding arc (transfer to departures of any route)
                     }
                 }
             }
         }
-
-        for (_, stop_sequence) in lines_per_station.iter_mut() {
-            stop_sequence.sort();
-            stop_sequence.dedup();
-        }
-
-        (
-            Self {
-                nodes,
-                edges,
-                station_map,
-                station_info,
-            },
-            DirectConnections {
-                route_tables,
-                lines_per_station,
-            },
-        )
     }
+
+    for (_, stop_sequence) in lines_per_station.iter_mut() {
+        stop_sequence.sort();
+        stop_sequence.dedup();
+    }
+
+    (
+        graph,
+        DirectConnections {
+            route_tables,
+            lines_per_station,
+        },
+    )
 }
 
 //For each station: Hashmap<stationid, (line, stop sequence #)>

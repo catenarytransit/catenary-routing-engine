@@ -7,11 +7,12 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
+use petgraph::graph::*;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct TransitDijkstra {
     //handle time expanded dijkstra calculations
-    pub graph: TimeExpandedGraph,
+    pub graph: Graph<NodeId, u64>,
     cost_upper_bound: u64,
 }
 
@@ -89,7 +90,7 @@ impl PathedNode {
 
 impl TransitDijkstra {
     //implementation of time expanded dijkstra's shortest path algorithm
-    pub fn new(graph: &TimeExpandedGraph) -> Self {
+    pub fn new(graph: &Graph<NodeId, u64>) -> Self {
         Self {
             graph: graph.clone(),
             cost_upper_bound: u64::MAX,
@@ -106,8 +107,7 @@ impl TransitDijkstra {
         visited_nodes: &HashMap<NodeId, PathedNode>,
     ) -> Vec<(NodeId, u64)> {
         //return node id of neighbors
-        let mut paths = Vec::new();
-        if let Some(connections) = self.graph.edges.get(&current.node_self) {
+        if let Some(connections) = self.graph.neighbors(&current.node_self) {
             for (next_node_id, cost) in connections {
                 if visited_nodes.contains_key(next_node_id) {
                     continue;
@@ -219,7 +219,7 @@ impl TransitDijkstra {
 
     pub fn get_random_node_id(&self) -> Option<NodeId> {
         //returns ID of a random valid node from a graph
-        let full_node_list = self.graph.nodes.iter().copied().collect::<Vec<NodeId>>();
+        let full_node_list = graph.nodes.iter().copied().collect::<Vec<NodeId>>();
         let mut rng = rand::thread_rng();
         let random: usize = rng.gen_range(0..full_node_list.len());
         full_node_list.get(random).copied()
