@@ -186,7 +186,6 @@ impl TimeExpandedGraph {
                 );
 
                 let arrival_time: u64 = stoptime.arrival_time.unwrap().into();
-                let departure_time: u64 = stoptime.departure_time.unwrap().into();
 
                 stations_time_from_trip_start.insert(id, arrival_time - trip_start_time);
 
@@ -213,16 +212,9 @@ impl TimeExpandedGraph {
                     trip_id,
                 };
                 //direct link to next nodeset for compacting graph
-                let departure_node = NodeId {
-                    node_type: NodeType::Departure,
-                    station_id: id,
-                    time: Some(departure_time),
-                    trip_id,
-                };
 
                 nodes.insert(arrival_node);
                 nodes.insert(transfer_node);
-                nodes.insert(departure_node);
 
                 if let Some((prev_dep, prev_dep_time)) = prev_stop {
                     edges //travelling arc (prev transfer to arrival of same route)
@@ -237,18 +229,6 @@ impl TimeExpandedGraph {
                             a
                         });
                 }
-
-                edges //layover arc for current arrival to current departure
-                    .entry(arrival_node) //tail
-                    .and_modify(|inner| {
-                        inner.insert(departure_node, departure_time - arrival_time);
-                        //head
-                    })
-                    .or_insert({
-                        let mut a = HashMap::new();
-                        a.insert(departure_node, departure_time - arrival_time); //head
-                        a
-                    });
 
                 edges //alighting arc (arrival to next transfer of same route)
                     .entry(arrival_node) //tail
@@ -265,7 +245,6 @@ impl TimeExpandedGraph {
                 let node_list = vec![
                     (arrival_time, arrival_node),
                     (arrival_time + transfer_buffer, transfer_node),
-                    (departure_time, departure_node),
                 ];
 
                 nodes_by_time.extend(node_list.iter());
@@ -280,8 +259,7 @@ impl TimeExpandedGraph {
                     })
                     .or_insert((StationInfo { id, lat, lon }, node_list));
 
-                prev_stop = Some((departure_node, departure_time));
-                //prev_stop = Some((transfer_node, arrival_time + transfer_buffer));
+                prev_stop = Some((transfer_node, arrival_time + transfer_buffer));
             }
 
             match route_tables.entry(route_id.clone()) {
@@ -316,21 +294,6 @@ impl TimeExpandedGraph {
                         let future_node = station_nodes_by_time.get(index).unwrap();
                         if future_node.1.node_type == NodeType::Transfer {
                             edges //waiting arc (transfer to transfers of any route)
-                                .entry(node.1) //tail
-                                .and_modify(|inner| {
-                                    inner.insert(future_node.1, future_node.0 - node.0);
-                                    //head
-                                })
-                                .or_insert({
-                                    let mut a = HashMap::new();
-                                    a.insert(future_node.1, future_node.0 - node.0); //head
-                                    a
-                                });
-                            break;
-                        }
-
-                        if future_node.1.node_type == NodeType::Departure {
-                            edges //boarding arc (transfer to departures of any route)
                                 .entry(node.1) //tail
                                 .and_modify(|inner| {
                                     inner.insert(future_node.1, future_node.0 - node.0);

@@ -183,8 +183,8 @@ impl TransitDijkstra {
             for neighbor in neighbors {
                 let mut transfer_count = pathed_current_node.transfer_count;
                 if pathed_current_node.node_self.node_type == NodeType::Transfer
-                    //&& neighbor.0.node_type == NodeType::Arrival
-                    && neighbor.0.node_type == NodeType::Departure
+                    && neighbor.0.node_type == NodeType::Arrival
+                    //&& neighbor.0.node_type == NodeType::Departure
                 {
                     //transfer arc detected, increment transfer count for current path
                     transfer_count += 1;

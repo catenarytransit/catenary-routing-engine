@@ -170,8 +170,8 @@ pub fn num_transfer_patterns_from_source(
                 transfers.push(*target);
                 let mut previous_node: NodeId = *target;
                 for &node in path {
-                    if previous_node.node_type == NodeType::Departure
-                        || previous_node.node_type == NodeType::Transfer
+                    if //previous_node.node_type == NodeType::Departure ||
+                        previous_node.node_type == NodeType::Transfer
                             && node.node_type == NodeType::Transfer
                     {
                         transfers.push(node);

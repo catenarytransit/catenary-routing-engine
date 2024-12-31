@@ -5,7 +5,6 @@ pub enum NodeType {
     Untyped = 0,
     Arrival = 1,
     Transfer = 2,
-    Departure = 3,
 }
 
 impl From<String> for NodeType {
@@ -14,7 +13,6 @@ impl From<String> for NodeType {
             "Untyped" => NodeType::Untyped,
             "Arrival" => NodeType::Arrival,
             "Transfer" => NodeType::Transfer,
-            "Departure" => NodeType::Departure,
             &_ => NodeType::Untyped,
         }
     }
@@ -26,7 +24,6 @@ impl From<NodeType> for String {
             NodeType::Untyped => "Untyped".to_string(),
             NodeType::Arrival => "Arrival".to_string(),
             NodeType::Transfer => "Transfer".to_string(),
-            NodeType::Departure => "Departure".to_string(),
         }
     }
 }
