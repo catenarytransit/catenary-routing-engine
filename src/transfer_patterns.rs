@@ -30,7 +30,7 @@ pub fn hub_selection(
 
     let mut time_independent_nodes = HashSet::new();
 
-    for (tail, edge) in router.graph.edges.iter() {
+    for (tail, edge) in router.graph.raw_edges().iter() {
         let ti_tail = NodeId {
             node_type: NodeType::Untyped,
             station_id: tail.station_id,
