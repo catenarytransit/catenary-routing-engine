@@ -10,7 +10,7 @@ use std::time::Instant;
 //use transit_router::coord_int_convert::coord_to_int;
 //use transit_router::NodeType;
 //use transit_router::RoadNetwork;
-use transit_router::{transfer_patterns::*, transit_dijkstras::*, transit_network::*};
+use transit_router::{transfer_patterns::*, transit_network::*};
 
 #[test]
 fn test() {
@@ -21,7 +21,7 @@ fn test() {
     let trips = gtfs.trips.clone();
     let routes = gtfs.routes.clone();
     let stops = gtfs.stops.clone();
-    let (mut router, connections) = TimeExpandedGraph::new(gtfs, "Wednesday".to_string(), 0);
+    let (mut router, connections) = new_transit_network(gtfs, "Wednesday".to_string(), 0);
 
     //full routing test
     //see following link, anything but first option (which includes walking between stations, hasnt been implemented yet)
