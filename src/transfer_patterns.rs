@@ -80,6 +80,7 @@ pub fn num_transfer_patterns_from_source(
     router: &TransitDijkstra,
     hubs: Option<&HashSet<i64>>,
     start_time: Option<u64>,
+    thread_num: usize
 ) -> (Mutex<Vec<Vec<NodeId>>>, Instant) {
     println!("start tp calc \t");
     let now = Instant::now();
@@ -120,7 +121,6 @@ pub fn num_transfer_patterns_from_source(
     let now = Instant::now();
 
     let total_transfer_patterns = Arc::new(Mutex::new(Vec::new()));
-    let thread_num = 4;
     let source_chunk_len = arrival_nodes.len();
     let threaded_sources = Arc::new(arrival_nodes.clone());
     let mut handles = vec![];
@@ -269,11 +269,13 @@ pub fn query_graph_construction_from_geodesic_points(
     println!("hubs: {:?}, t {:?}", &hubs, now.elapsed());
 
     let mut tps = Vec::new();
+    
+    let thread_num = 8; //8 for local searches
 
     for source in source_stations.iter() {
         let now = Instant::now();
         let (l_tps, n_now) =
-            num_transfer_patterns_from_source(source.id, router, Some(&hubs), Some(start_time));
+            num_transfer_patterns_from_source(source.id, router, Some(&hubs), Some(start_time), thread_num);
         println!(
             "local tp {:?} or immediate {:?}",
             now.elapsed(),
@@ -287,12 +289,12 @@ pub fn query_graph_construction_from_geodesic_points(
 
     let now = Instant::now();
     let reached: Vec<_> = tps.iter().map(|t| t.last().unwrap().station_id).collect();
-    let used_hubs: Vec<_> = hubs.iter().filter(|n| reached.contains(n)).collect();
+    let used_hubs: Vec<_> = hubs.clone().into_iter().filter(|n| reached.contains(n)).collect();
 
     //global transfer patterns from I(hubs) to to N(target())
     println!("num hubs used {:?}, t {:?}", used_hubs, now.elapsed());
 
-    for hub in used_hubs.iter() {
+    /*for hub in used_hubs.iter() {
         let now = Instant::now();
         let (g_tps, n_now) =
             num_transfer_patterns_from_source(**hub, router, None, Some(start_time));
@@ -305,7 +307,54 @@ pub fn query_graph_construction_from_geodesic_points(
         let now = Instant::now();
         tps.extend(g_tps.lock().unwrap().drain(..));
         println!("extending hubs {:?}", now.elapsed());
+    }*/
+
+    
+    let total_transfer_patterns = Arc::new(Mutex::new(tps));
+
+    let num_used_hubs = used_hubs.len();
+
+    let thread_num = 2.max(num_used_hubs / 2);
+
+    let threaded_roots = Arc::new(used_hubs);
+    let arc_router = Arc::new(router.clone());
+    let mut handles = vec![];
+
+    for x in 1..thread_num {
+        let roots = Arc::clone(&threaded_roots);
+        let transfer_patterns = Arc::clone(&total_transfer_patterns);
+        let router = Arc::clone(&arc_router);
+        let handle = thread::spawn(move || {
+            let r = roots;
+            for i in ((x - 1) * (num_used_hubs / (thread_num - 1)))
+                ..(x * num_used_hubs / (thread_num - 1))
+            {
+                let now = Instant::now();
+                let hub = r.get(i).unwrap();
+                let (g_tps, n_now) =
+                    num_transfer_patterns_from_source(*hub, &router, None, Some(start_time), 6);
+                println!(
+                    "ran tp for hubs {:?} vs immediate {:?}",
+                    now.elapsed(),
+                    n_now.elapsed()
+                );
+
+                let mut ttp = transfer_patterns.lock().unwrap();
+                ttp.extend(g_tps.lock().unwrap().drain(..));
+                println!("extending hubs {:?}", now.elapsed());
+            }
+        });
+
+        handles.push(handle);
     }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let tps = total_transfer_patterns.lock().unwrap();
+    println!("source to hub tps num {}", tps.len());
+    
 
     let now = Instant::now();
 

@@ -30,7 +30,7 @@ fn test() {
     let preset_distance = 250.0;
 
     //pepperidge farm to harriet beecher stowe center
-    let (source, target) = make_points_from_coords(
+    /*let (source, target) = make_points_from_coords(
         41.86829675142084,
         -72.71973332600558,
         41.76726348091365,
@@ -49,7 +49,7 @@ fn test() {
 
     let output = File::create(savepath).unwrap();
     println!("query graph constructed in {:?}", now.elapsed());
-    serde_json::to_writer(output, &graph).unwrap();
+    serde_json::to_writer(output, &graph).unwrap();*/
 
     //part 2
 
