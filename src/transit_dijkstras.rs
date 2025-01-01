@@ -6,16 +6,8 @@ use petgraph::Direction::Outgoing;
 use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::hash::Hash;
 use std::rc::Rc;
 use petgraph::{graph::*, visit::EdgeRef};
-
-#[derive(Debug, Clone)]
-pub struct TransitDijkstra {
-    //handle time expanded dijkstra calculations
-    pub graph: Graph<NodeId, u64>,
-    cost_upper_bound: u64,
-}
 
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Ord, Hash)]
 pub struct PathedNode {
@@ -91,12 +83,23 @@ impl PathedNode {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TransitDijkstra {
+    //handle time expanded dijkstra calculations
+    pub graph: Graph<NodeId, u64>,
+    pub station_map: HashMap<String, Station>,
+    pub station_info: HashMap<Station, Vec<(u64, NodeId, NodeIndex)>>,
+    cost_upper_bound: u64,
+}
+
 impl TransitDijkstra {
     //implementation of time expanded dijkstra's shortest path algorithm
-    pub fn new(graph: &Graph<NodeId, u64>) -> Self {
+    pub fn new(graph: &Graph<NodeId, u64>, station_map: HashMap<String, Station>, station_info: HashMap<Station, Vec<(u64, NodeId, NodeIndex)>>) -> Self {
         Self {
             graph: graph.clone(),
             cost_upper_bound: u64::MAX,
+            station_map,
+            station_info
         }
     }
 
@@ -229,24 +232,21 @@ impl TransitDijkstra {
 pub struct TDDijkstra {
     //handle time dependent dijkstra calculations
     pub connections: DirectConnections,
-    pub graph: Graph<NodeId, NodeId>,
+    pub graph: Graph<NodeId, u8>,
     pub visited_nodes: HashMap<NodeIndex, PathedNode>,
-    pub station_map: HashMap<String, i64>,
 }
 
 impl TDDijkstra {
     //implementation of time dependent shortest path algorithm
     pub fn new(
         connections: DirectConnections,
-        graph: Graph<NodeId, NodeId>,
-        station_map: HashMap<String, i64>,
+        graph: Graph<NodeId, u8>,
     ) -> Self {
         let visited_nodes = HashMap::new();
         Self {
             connections,
             graph,
             visited_nodes,
-            station_map,
         }
     }
 
