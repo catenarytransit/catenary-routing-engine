@@ -320,7 +320,7 @@ pub fn query_graph_construction_from_geodesic_points(
     let arc_router = Arc::new(router.clone());
     let mut handles = vec![];
 
-    for x in 1..thread_num {
+    for x in 1..thread_num + 1 {
         let roots = Arc::clone(&threaded_roots);
         let transfer_patterns = Arc::clone(&total_transfer_patterns);
         let router = Arc::clone(&arc_router);
