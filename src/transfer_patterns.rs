@@ -215,16 +215,7 @@ pub struct QueryGraphItem {
     station_map: HashMap<String, Station>,
 }
 
-pub fn query_graph_construction_from_geodesic_points(
-    router: &mut TransitDijkstra,
-    source: Point,
-    target: Point,
-    start_time: u64,
-    hub_time_lim: u64,
-    preset_distance: f64, //in meters
-) -> QueryGraphItem {
-    let now = Instant::now();
-    //compute sets of N(source) and N(target) of stations N= near
+pub async fn stations_near_point(router: &TransitDijkstra, source: Point, preset_distance: f64, start_time: u64) -> (Vec<Station>, Vec<NodeId>) {
     let (source_stations, nodes_per_source): (Vec<_>, Vec<_>)=
     router
     .station_info
@@ -236,6 +227,33 @@ pub fn query_graph_construction_from_geodesic_points(
     })
     .unzip();
 
+    let source_nodes: Vec<NodeId> = nodes_per_source
+    .into_iter()
+    .flat_map(|x| {
+        x.into_iter()
+            .map(|(a, b, _)| (a, b))
+            .unzip::<u64, NodeId, Vec<u64>, Vec<NodeId>>()
+            .1
+    })
+    .filter(|node| node.time >= Some(start_time) && node.time <= Some(start_time + 3600))
+    .collect();
+
+    (source_stations, source_nodes)
+}
+
+pub async fn query_graph_construction_from_geodesic_points(
+    router: &mut TransitDijkstra,
+    source: Point,
+    target: Point,
+    start_time: u64,
+    hub_time_lim: u64,
+    preset_distance: f64, //in meters
+) -> QueryGraphItem {
+    let now = Instant::now();
+    //compute sets of N(source) and N(target) of stations N= near
+    let (source_stations, source_nodes): (Vec<_>, Vec<_>)=
+        stations_near_point(router, source, preset_distance, start_time).await;
+
     println!(
         "Possible start nodes count: {}, t {:?}",
         source_stations.len(),
@@ -245,16 +263,8 @@ pub fn query_graph_construction_from_geodesic_points(
 
     //let earliest_departure = sources.iter().min_by_key(|a| a.time).unwrap().time;
 
-    let (target_stations, nodes_per_target): (Vec<_>, Vec<_>)=
-    router
-    .station_info
-    .clone()
-    .into_iter()
-    .filter(|(station, _)| {
-        let node_coord = point!(x: station.lon as f64 / f64::powi(10.0, 14), y: station.lat as f64 / f64::powi(10.0, 14));
-        Haversine::distance(target, node_coord) <= preset_distance
-    })
-    .unzip();
+    let (target_stations, target_nodes): (Vec<_>, Vec<_>)=
+        stations_near_point(router, target, preset_distance, start_time).await;
 
     println!(
         "Possible end nodes count: {}, t {:?}",
@@ -269,13 +279,11 @@ pub fn query_graph_construction_from_geodesic_points(
     println!("hubs: {:?}, t {:?}", &hubs, now.elapsed());
 
     let mut tps = Vec::new();
-    
-    let thread_num = 8; //8 for local searches
 
     for source in source_stations.iter() {
         let now = Instant::now();
         let (l_tps, n_now) =
-            num_transfer_patterns_from_source(source.id, router, Some(&hubs), Some(start_time), thread_num);
+            num_transfer_patterns_from_source(source.id, router, Some(&hubs), Some(start_time), 8);
         println!(
             "local tp {:?} or immediate {:?}",
             now.elapsed(),
@@ -293,28 +301,12 @@ pub fn query_graph_construction_from_geodesic_points(
 
     //global transfer patterns from I(hubs) to to N(target())
     println!("num hubs used {:?}, t {:?}", used_hubs, now.elapsed());
-
-    /*for hub in used_hubs.iter() {
-        let now = Instant::now();
-        let (g_tps, n_now) =
-            num_transfer_patterns_from_source(**hub, router, None, Some(start_time));
-        println!(
-            "ran tp for hubs {:?} vs immediate {:?}",
-            now.elapsed(),
-            n_now.elapsed()
-        );
-
-        let now = Instant::now();
-        tps.extend(g_tps.lock().unwrap().drain(..));
-        println!("extending hubs {:?}", now.elapsed());
-    }*/
-
     
     let total_transfer_patterns = Arc::new(Mutex::new(tps));
 
     let num_used_hubs = used_hubs.len();
 
-    let thread_num = 2.max(num_used_hubs / 2);
+    let thread_num = 3.min(num_used_hubs / 2);
 
     let threaded_roots = Arc::new(used_hubs);
     let arc_router = Arc::new(router.clone());
@@ -332,7 +324,7 @@ pub fn query_graph_construction_from_geodesic_points(
                 let now = Instant::now();
                 let hub = r.get(i).unwrap();
                 let (g_tps, n_now) =
-                    num_transfer_patterns_from_source(*hub, &router, None, Some(start_time), 6);
+                    num_transfer_patterns_from_source(*hub, &router, None, Some(start_time), 5);
                 println!(
                     "ran tp for hubs {:?} vs immediate {:?}",
                     now.elapsed(),
@@ -355,35 +347,7 @@ pub fn query_graph_construction_from_geodesic_points(
     let tps = total_transfer_patterns.lock().unwrap();
     println!("source to hub tps num {}", tps.len());
     
-
     let now = Instant::now();
-
-    let source_nodes: Vec<_> = nodes_per_source
-        .into_iter()
-        .flat_map(|x| {
-            x.into_iter()
-                .map(|(a, b, _)| (a, b))
-                .unzip::<u64, NodeId, Vec<u64>, Vec<NodeId>>()
-                .1
-        })
-        .filter(|node| node.time >= Some(start_time) && node.time <= Some(start_time + 3600))
-        .collect();
-
-    let earliest_departure = source_nodes.iter().min_by_key(|a| a.time).unwrap().time;
-
-    let target_nodes: Vec<_> = nodes_per_target
-        .into_iter()
-        .flat_map(|x| {
-            x.into_iter()
-                .map(|(a, b, _)| (a, b))
-                .unzip::<u64, NodeId, Vec<u64>, Vec<NodeId>>()
-                .1
-        })
-        .filter(|node| {
-            node.time >= earliest_departure && node.time <= Some(earliest_departure.unwrap() + 3600)
-            //how long you're willing to wait
-        })
-        .collect();
 
     let paths = tps
         .iter()
