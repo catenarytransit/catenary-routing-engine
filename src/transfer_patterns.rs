@@ -305,7 +305,7 @@ pub async fn query_graph_construction_from_geodesic_points(
 
     let num_used_hubs = used_hubs.len();
 
-    let thread_num = 4.min(num_used_hubs / 2);
+    let thread_num = 3;
 
     let threaded_roots = Arc::new(used_hubs);
     let arc_router = Arc::new(router.clone());
