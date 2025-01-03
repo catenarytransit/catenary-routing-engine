@@ -128,7 +128,8 @@ pub fn num_transfer_patterns_from_source(
     for x in 1..thread_num {
         let source = Arc::clone(&threaded_sources);
         let transfer_patterns = Arc::clone(&total_transfer_patterns);
-        let handle = thread::spawn(move || {
+        let thread = thread::Builder::new().name(format!("num_tp_t{}", x));
+        let handle = thread.spawn(move || {
             let src = source;
             for i in ((x - 1) * (source_chunk_len / (thread_num - 1)))
                 ..(x * source_chunk_len / (thread_num - 1))
@@ -153,7 +154,7 @@ pub fn num_transfer_patterns_from_source(
                 transfer_patterns.lock().unwrap().push(transfers);
                 transfer_patterns.lock().unwrap().shrink_to_fit();
             }
-        });
+        }).unwrap();
 
         handles.push(handle);
     }
@@ -254,17 +255,15 @@ pub async fn query_graph_construction_from_geodesic_points(
     let (source_stations, source_nodes): (Vec<_>, Vec<_>)=
         stations_near_point(router, source, preset_distance, start_time).await;
 
+    let (target_stations, target_nodes): (Vec<_>, Vec<_>)=
+        stations_near_point(router, target, preset_distance, start_time).await;
+
     println!(
         "Possible start nodes count: {}, t {:?}",
         source_stations.len(),
         now.elapsed()
     );
     let now = Instant::now();
-
-    //let earliest_departure = sources.iter().min_by_key(|a| a.time).unwrap().time;
-
-    let (target_stations, target_nodes): (Vec<_>, Vec<_>)=
-        stations_near_point(router, target, preset_distance, start_time).await;
 
     println!(
         "Possible end nodes count: {}, t {:?}",
@@ -306,17 +305,18 @@ pub async fn query_graph_construction_from_geodesic_points(
 
     let num_used_hubs = used_hubs.len();
 
-    let thread_num = 3.min(num_used_hubs / 2);
+    let thread_num = 4.min(num_used_hubs / 2);
 
     let threaded_roots = Arc::new(used_hubs);
     let arc_router = Arc::new(router.clone());
     let mut handles = vec![];
 
-    for x in 1..thread_num + 1 {
+    for x in 1..thread_num {
         let roots = Arc::clone(&threaded_roots);
         let transfer_patterns = Arc::clone(&total_transfer_patterns);
         let router = Arc::clone(&arc_router);
-        let handle = thread::spawn(move || {
+        let thread = thread::Builder::new().name(format!("graph_con{}", x));
+        let handle = thread.spawn(move || {
             let r = roots;
             for i in ((x - 1) * (num_used_hubs / (thread_num - 1)))
                 ..(x * num_used_hubs / (thread_num - 1))
@@ -324,7 +324,7 @@ pub async fn query_graph_construction_from_geodesic_points(
                 let now = Instant::now();
                 let hub = r.get(i).unwrap();
                 let (g_tps, n_now) =
-                    num_transfer_patterns_from_source(*hub, &router, None, Some(start_time), 5);
+                    num_transfer_patterns_from_source(*hub, &router, None, Some(start_time), 4);
                 println!(
                     "ran tp for hubs {:?} vs immediate {:?}",
                     now.elapsed(),
@@ -335,7 +335,7 @@ pub async fn query_graph_construction_from_geodesic_points(
                 ttp.extend(g_tps.lock().unwrap().drain(..));
                 println!("extending hubs {:?}", now.elapsed());
             }
-        });
+        }).unwrap();
 
         handles.push(handle);
     }
