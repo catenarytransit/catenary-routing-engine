@@ -217,6 +217,7 @@ pub struct QueryGraphItem {
 }
 
 pub async fn stations_near_point(router: &TransitDijkstra, source: Point, preset_distance: f64, start_time: u64) -> (Vec<Station>, Vec<NodeId>) {
+    let now = Instant::now();
     let (source_stations, nodes_per_source): (Vec<_>, Vec<_>)=
     router
     .station_info
@@ -239,6 +240,12 @@ pub async fn stations_near_point(router: &TransitDijkstra, source: Point, preset
     .filter(|node| node.time >= Some(start_time) && node.time <= Some(start_time + 3600))
     .collect();
 
+    println!(
+        "Possible end nodes count: {}, t {:?}",
+        source_stations.len(),
+        now.elapsed()
+    );
+
     (source_stations, source_nodes)
 }
 
@@ -257,20 +264,6 @@ pub async fn query_graph_construction_from_geodesic_points(
 
     let (target_stations, target_nodes): (Vec<_>, Vec<_>)=
         stations_near_point(router, target, preset_distance, start_time).await;
-
-    println!(
-        "Possible start nodes count: {}, t {:?}",
-        source_stations.len(),
-        now.elapsed()
-    );
-    let now = Instant::now();
-
-    println!(
-        "Possible end nodes count: {}, t {:?}",
-        target_stations.len(),
-        now.elapsed()
-    );
-    let now = Instant::now();
 
     //get hubs of important stations I(hubs)
     let hubs = hub_selection(router, 50000, hub_time_lim, router.station_map.len()); //cost limit at 10 hours, arbitrary
