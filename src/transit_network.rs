@@ -217,7 +217,7 @@ impl TimeExpandedGraph {
                 nodes.insert(transfer_node);
 
                 if let Some((prev_dep, prev_dep_time)) = prev_stop {
-                    edges //travelling arc (prev transfer to arrival of same route)
+                    edges //travelling arc (prev arrival to arrival of same route)
                         .entry(prev_dep) //tail
                         .and_modify(|inner| {
                             inner.insert(arrival_node, arrival_time - prev_dep_time);
@@ -259,7 +259,7 @@ impl TimeExpandedGraph {
                     })
                     .or_insert((StationInfo { id, lat, lon }, node_list));
 
-                prev_stop = Some((transfer_node, arrival_time + transfer_buffer));
+                prev_stop = Some((arrival_node, arrival_time));
             }
 
             match route_tables.entry(route_id.clone()) {
@@ -292,8 +292,8 @@ impl TimeExpandedGraph {
                 if node.1.node_type == NodeType::Transfer {
                     for index in current_index + 1..station_nodes_by_time.len() {
                         let future_node = station_nodes_by_time.get(index).unwrap();
-                        if future_node.1.node_type == NodeType::Transfer {
-                            edges //waiting arc (transfer to transfers of any route)
+                        if future_node.1.node_type == NodeType::Arrival {
+                            edges //waiting arc (transfer to arrivals of any route)
                                 .entry(node.1) //tail
                                 .and_modify(|inner| {
                                     inner.insert(future_node.1, future_node.0 - node.0);

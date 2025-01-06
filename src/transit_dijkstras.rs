@@ -130,7 +130,6 @@ impl TransitDijkstra {
 
         let mut priority_queue: BinaryHeap<Reverse<(u64, PathedNode)>> = BinaryHeap::new();
         let mut visited_nodes: HashMap<NodeId, PathedNode> = HashMap::new();
-        let mut inactive_nodes: HashSet<NodeId> = HashSet::new();
 
         //stores distances of node relative to target
         let mut gscore: HashMap<NodeId, u64> = HashMap::new();
@@ -147,19 +146,6 @@ impl TransitDijkstra {
             let idx = pathed_current_node.node_self;
             visited_nodes.insert(idx, pathed_current_node.clone());
 
-            //stop search for local TP if all unsettled NodeIds are inactive -->
-            //all unvisited nodes should become subset of inactive nodes
-            //don't need this with 3-legs heuristic
-            /*if hubs.is_some() {
-                let a = visited_nodes.keys().collect::<HashSet<_>>();
-                let b = inactive_nodes.iter().collect();
-                let c = a.union(&b);
-                if self.graph.nodes.len() == c.count() {
-                    println!("augh");
-                    return visited_nodes;
-                }
-            }*/
-
             //stop conditions
             //cost or # of settled nodes goes over limit
             if current_cost > self.cost_upper_bound {
@@ -173,12 +159,6 @@ impl TransitDijkstra {
             }
 
             let neighbors = self.get_neighbors(&pathed_current_node, &visited_nodes);
-
-            if hubs.is_some_and(|a| a.contains(&pathed_current_node.node_self.station_id))
-                && pathed_current_node.node_self.node_type == NodeType::Transfer
-            {
-                inactive_nodes.extend(neighbors.iter().map(|(node, _)| node));
-            }
 
             for neighbor in neighbors {
                 let mut transfer_count = pathed_current_node.transfer_count;
